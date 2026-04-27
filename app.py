@@ -3,68 +3,85 @@ import pandas as pd
 import io
 import zipfile
 
-st.set_page_config(page_title="Công cụ lọc & xóa dòng Excel", layout="centered")
+st.set_page_config(page_title="Công cụ lọc Excel thông minh", layout="wide")
 
-st.title("📂 Công cụ xử lý Excel hàng loạt")
-st.write("Tải lên các file Excel, nhập cột và giá trị cần xóa. Kết quả sẽ được nén vào file ZIP.")
+st.title("📂 Công cụ xóa dòng Excel hàng loạt")
+st.write("Hướng dẫn: Tải file -> Chọn cột -> Chọn các giá trị muốn xóa -> Tải về.")
 
-# 1. Nhập cấu hình
-with st.sidebar:
-    st.header("Cấu hình lọc")
-    column_name = st.text_input("Tên cột cần kiểm tra:", placeholder="Ví dụ: TrangThai")
-    filter_value = st.text_input("Giá trị cần xóa:", placeholder="Ví dụ: Loi")
-    
-# 2. Upload file
-uploaded_files = st.file_uploader("Chọn các file Excel (.xlsx)", type=["xlsx"], accept_multiple_files=True)
+# 1. Tải file lên
+uploaded_files = st.file_uploader("Bước 1: Chọn các file Excel (.xlsx)", type=["xlsx"], accept_multiple_files=True)
 
-if uploaded_files and column_name and filter_value:
-    if st.button("Bắt đầu xử lý"):
-        # Tạo một bộ nhớ đệm để chứa file ZIP
-        zip_buffer = io.BytesIO()
+if uploaded_files:
+    # Lấy danh sách cột từ file đầu tiên để người dùng chọn
+    # Dùng file đầu tiên làm mẫu (Template)
+    try:
+        sample_df = pd.read_excel(uploaded_files[0])
+        columns = sample_df.columns.tolist()
         
-        with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-            success_count = 0
-            
-            for uploaded_file in uploaded_files:
-                try:
-                    # Đọc file
-                    df = pd.read_excel(uploaded_file)
-                    
-                    if column_name in df.columns:
-                        # Thực hiện xóa các dòng khớp với giá trị lọc
-                        # Chuyển cả cột và giá trị về string để so sánh khớp tuyệt đối
-                        initial_rows = len(df)
-                        df = df[df[column_name].astype(str) != str(filter_value)]
-                        rows_removed = initial_rows - len(df)
-                        
-                        # Tạo tên file mới
-                        base_name = uploaded_file.name.rsplit('.', 1)[0]
-                        new_filename = f"{base_name}_{filter_value}.xlsx"
-                        
-                        # Lưu file vào bộ nhớ đệm Excel
-                        output = io.BytesIO()
-                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            df.to_excel(writer, index=False)
-                        
-                        # Thêm vào file ZIP
-                        zip_file.writestr(new_filename, output.getvalue())
-                        st.success(f"Đã xử lý: {uploaded_file.name} (Xóa {rows_removed} dòng)")
-                        success_count += 1
-                    else:
-                        st.warning(f"File {uploaded_file.name} không có cột '{column_name}'")
-                        
-                except Exception as e:
-                    st.error(f"Lỗi xử lý file {uploaded_file.name}: {e}")
+        st.divider()
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Bước 2: Chọn cột
+            selected_column = st.selectbox("Bước 2: Chọn cột muốn lọc dữ liệu:", options=columns)
 
-        # Cho phép tải xuống file ZIP nếu có file thành công
-        if success_count > 0:
+        if selected_column:
+            # Lấy các giá trị duy nhất trong cột đó từ file đầu tiên (hoặc gộp tất cả file nếu cần)
+            # Ở đây lấy từ file đầu tiên để nhanh, hoặc gộp toàn bộ để đầy đủ:
+            all_unique_values = sample_df[selected_column].dropna().unique().tolist()
+            
+            with col2:
+                # Bước 3: Chọn các giá trị muốn xóa (Cho phép chọn nhiều)
+                values_to_delete = st.multiselect(
+                    f"Bước 3: Chọn các giá trị trong cột '{selected_column}' để XOÁ:",
+                    options=[str(v) for v in all_unique_values]
+                )
+
+        if values_to_delete:
             st.divider()
-            st.write(f"🎉 Đã xử lý xong {success_count} file!")
-            st.download_button(
-                label="📥 Tải xuống tất cả kết quả (.ZIP)",
-                data=zip_buffer.getvalue(),
-                file_name=f"Ket_qua_loc_{filter_value}.zip",
-                mime="application/zip"
-            )
+            if st.button("🚀 Bắt đầu xử lý tất cả file"):
+                zip_buffer = io.BytesIO()
+                
+                with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+                    for uploaded_file in uploaded_files:
+                        try:
+                            # Đọc từng file
+                            df = pd.read_excel(uploaded_file)
+                            
+                            if selected_column in df.columns:
+                                # Logic: Giữ lại những dòng KHÔNG nằm trong danh sách chọn (nghĩa là xóa dòng đã chọn)
+                                initial_rows = len(df)
+                                # Chuyển cột về string để so sánh khớp với multiselect
+                                df = df[~df[selected_column].astype(str).isin(values_to_delete)]
+                                rows_removed = initial_rows - len(df)
+                                
+                                # Tạo tên file mới: TenCu_GiaTri1_GiaTri2...
+                                base_name = uploaded_file.name.rsplit('.', 1)[0]
+                                suffix = "_".join(values_to_delete)[:50] # Giới hạn độ dài tên file
+                                new_filename = f"{base_name}_{suffix}.xlsx"
+                                
+                                # Ghi vào bộ nhớ đệm
+                                output = io.BytesIO()
+                                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                                    df.to_excel(writer, index=False)
+                                
+                                # Thêm vào ZIP
+                                zip_file.writestr(new_filename, output.getvalue())
+                                st.info(f"Đã xử lý: {uploaded_file.name} (Xóa {rows_removed} dòng)")
+                        
+                        except Exception as e:
+                            st.error(f"Lỗi khi xử lý file {uploaded_file.name}: {e}")
+
+                # Nút tải xuống file ZIP
+                st.success("✅ Hoàn tất!")
+                st.download_button(
+                    label="📥 Tải xuống tất cả file đã xử lý (.ZIP)",
+                    data=zip_buffer.getvalue(),
+                    file_name=f"Ket_qua_xoa_du_lieu.zip",
+                    mime="application/zip"
+                )
+    except Exception as e:
+        st.error(f"Không thể đọc file. Vui lòng kiểm tra định dạng Excel. Lỗi: {e}")
+
 else:
-    st.info("Vui lòng nhập đầy đủ tên cột, giá trị lọc và tải file lên.")
+    st.info("Vui lòng tải ít nhất một file Excel để bắt đầu.")
